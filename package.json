@@ -1,0 +1,16 @@
+{
+  "name": "bistro-print-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Windows bridge for durable Bistro OS ESC/POS print jobs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "start": "node dist/src/main.js",
+    "lint": "eslint src test"
+  },
+  "dependencies": {},
+  "devDependencies": { "@eslint/js": "^9.28.0", "@types/node": "^22.15.30", "eslint": "^9.28.0", "globals": "^16.2.0", "tsx": "^4.19.4", "typescript": "^5.8.3", "typescript-eslint": "^8.33.1" },
+  "engines": { "node": ">=22" }
+}

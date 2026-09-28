@@ -1,0 +1,40 @@
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.local
+*.dpapi
+credential.*
+credentials.*
+secrets.*
+
+# Runtime data and logs
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+data/
+state/
+spool/
+*.spool
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Machine-specific printer configuration
+printer-config.*
+*.printer.local.*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini
