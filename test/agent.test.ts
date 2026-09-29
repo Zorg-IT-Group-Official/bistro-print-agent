@@ -168,6 +168,39 @@ test('malformed known-kind payload is safely failed without sending any TCP byte
   } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('malformed order-update quantities are failed before sending any TCP bytes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bistro-malformed-update-quantities-'));
+  const originalFetch = globalThis.fetch;
+  const statuses: string[] = [];
+  let sends = 0;
+  try {
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/result')) statuses.push(String(JSON.parse(String(init?.body ?? '{}')).status));
+      return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
+    const validUpdate = structuredClone(payload);
+    validUpdate.kind = 'order_update';
+    validUpdate.changes = [{ orderItemId: 'item-1', itemName: 'Water', variantName: null, modifiers: [], note: null,
+      changeType: 'increased', previousQuantity: 1, newQuantity: 2, quantityDelta: 1, reason: null }];
+    const invalidChanges = [
+      { ...validUpdate.changes[0], previousQuantity: undefined },
+      { ...validUpdate.changes[0], newQuantity: Number.NaN },
+      { ...validUpdate.changes[0], quantityDelta: 0 },
+      { ...validUpdate.changes[0], changeType: 'reduced' as const, previousQuantity: 1, newQuantity: 0, quantityDelta: 1 },
+    ];
+    for (let index = 0; index < invalidChanges.length; index++) {
+      await runner.process({ id: `malformed-update-${index}`, status: 'claimed', payload: { ...validUpdate, changes: [invalidChanges[index]] } as any, printer });
+    }
+    assert.equal(sends, 0);
+    assert.equal(statuses.length, invalidChanges.length);
+    assert.ok(statuses.every((status) => status === 'failed'));
+    runner.close();
+  } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('pre-send render failure remains failed when the backend acknowledgement is retried', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bistro-render-failure-'));
   const originalFetch = globalThis.fetch;

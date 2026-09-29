@@ -57,10 +57,20 @@ function validatePayload(value: unknown): asserts value is PrintPayload {
     Array.isArray(item.modifiers) && item.modifiers.every((modifier) => typeof modifier === 'string');
   if (!value.items.every(validItem)) throw new Error('malformed_payload: Invalid item row');
   if (value.kind === 'order_update' || (value.kind === 'reprint' && value.sourceKind === 'order_update')) {
-    if (!Array.isArray(value.changes) || !value.changes.every((change) => isRecord(change) &&
-      typeof change.itemName === 'string' &&
-      ['added', 'increased', 'reduced', 'cancelled'].includes(String(change.changeType)) &&
-      Array.isArray(change.modifiers) && change.modifiers.every((modifier) => typeof modifier === 'string'))) {
+    const validChange = (change: unknown) => {
+      if (!isRecord(change) || typeof change.itemName !== 'string' ||
+        !['added', 'increased', 'reduced', 'cancelled'].includes(String(change.changeType)) ||
+        !Array.isArray(change.modifiers) || !change.modifiers.every((modifier) => typeof modifier === 'string')) return false;
+      const { previousQuantity, newQuantity, quantityDelta, changeType } = change;
+      const validQuantity = (quantity: unknown): quantity is number =>
+        typeof quantity === 'number' && Number.isFinite(quantity) && Number.isInteger(quantity) && quantity >= 0;
+      if (!validQuantity(previousQuantity) || !validQuantity(newQuantity) || !validQuantity(quantityDelta)) return false;
+      if (changeType === 'added') return previousQuantity === 0 && newQuantity > 0 && quantityDelta === newQuantity;
+      if (changeType === 'increased') return newQuantity > previousQuantity && quantityDelta === newQuantity - previousQuantity;
+      if (changeType === 'reduced') return previousQuantity > newQuantity && newQuantity > 0 && quantityDelta === previousQuantity - newQuantity;
+      return previousQuantity > 0 && newQuantity === 0 && quantityDelta === previousQuantity;
+    };
+    if (!Array.isArray(value.changes) || !value.changes.every(validChange)) {
       throw new Error('malformed_payload: Invalid update changes');
     }
     if (value.currentItems !== undefined && (!Array.isArray(value.currentItems) || !value.currentItems.every(validItem))) {
