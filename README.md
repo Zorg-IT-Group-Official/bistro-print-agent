@@ -11,7 +11,7 @@ This Windows-side process claims durable jobs from Bistro OS over outbound HTTPS
 - ESC/POS text rendering for 58mm, 32 columns, bold, 58mm cut command when enabled; no beeper command is emitted. `sent` means the TCP stack accepted the bytes, not that a printer sensor confirmed paper output.
 - Text mode is intentionally printable ASCII only. Non-ASCII names fail visibly rather than becoming mojibake. A validated raster/code-page renderer is required for Bengali or other scripts; do not enable raster in a profile with this build.
 - Automatic resend is allowed only before TCP writing begins. Failures after writing begins are `uncertain`; an operator can inspect the printer and request an explicit reprint.
-- `order_update` jobs render an immutable revision delta with `ORDER UPDATE / NOT A NEW ORDER`, station-only changes, and the station's current item reference. KDS screens do not automatically print those updates; they retain an explicit reprint action backed by the saved revision job.
+- `order_update` jobs render an immutable revision delta with `ORDER UPDATE / NOT A NEW ORDER`, station-only changes, and the station's current item reference. Admin suppresses browser auto-print only when an event confirms durable print jobs; legacy events without confirmed jobs retain the browser fallback. Confirmed durable updates print through this agent, with explicit reprint backed by the saved revision job.
 - Text mode still rejects Bengali and other non-ASCII item names. Verify production-language output on the actual 58mm printer before deployment; Phase 2 does not add raster or Bengali rendering.
 - The process only accepts private/local IPv4 endpoints received in its authenticated claimed job. It never listens for arbitrary browser/LAN commands.
 
