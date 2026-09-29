@@ -127,6 +127,77 @@ test('agent persists sent before backend acknowledgement and never resends the s
   }
 });
 
+test('unknown job kind is safely failed without sending any TCP bytes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bistro-unknown-kind-'));
+  const originalFetch = globalThis.fetch;
+  const paths: string[] = [];
+  let sends = 0;
+  try {
+    globalThis.fetch = async (input, init) => {
+      paths.push(`${new URL(String(input)).pathname}:${String(JSON.parse(String(init?.body ?? '{}')).status ?? '')}`);
+      return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
+    await runner.process({ id: 'unknown-kind', status: 'claimed', payload: { ...payload, kind: 'future_kind' } as any, printer });
+    assert.equal(sends, 0);
+    assert.equal(paths.some((path) => path.includes('/sending:')), false);
+    assert.ok(paths.some((path) => path.endsWith('/result:failed')));
+    assert.equal(paths.some((path) => path.endsWith('/result:uncertain')), false);
+    runner.close();
+  } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('malformed known-kind payload is safely failed without sending any TCP bytes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bistro-malformed-payload-'));
+  const originalFetch = globalThis.fetch;
+  const paths: string[] = [];
+  let sends = 0;
+  try {
+    globalThis.fetch = async (input, init) => {
+      paths.push(`${new URL(String(input)).pathname}:${String(JSON.parse(String(init?.body ?? '{}')).status ?? '')}`);
+      return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
+    await runner.process({ id: 'malformed-payload', status: 'claimed', payload: { ...payload, items: null } as any, printer });
+    assert.equal(sends, 0);
+    assert.equal(paths.some((path) => path.includes('/sending:')), false);
+    assert.ok(paths.some((path) => path.endsWith('/result:failed')));
+    runner.close();
+  } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('pre-send render failure remains failed when the backend acknowledgement is retried', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bistro-render-failure-'));
+  const originalFetch = globalThis.fetch;
+  const statuses: string[] = [];
+  let resultAttempts = 0;
+  let sends = 0;
+  try {
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/result')) {
+        const status = String(JSON.parse(String(init?.body ?? '{}')).status);
+        statuses.push(status);
+        resultAttempts++;
+        if (resultAttempts === 1) throw new Error('temporary acknowledgement outage');
+      }
+      return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
+    const localized = structuredClone(payload); localized.items[0].itemName = 'ভাত';
+    const job: ClaimedJob = { id: 'render-failure', status: 'claimed', payload: localized, printer };
+    await runner.process(job);
+    await runner.process(job);
+    assert.equal(sends, 0);
+    assert.deepEqual(statuses, ['failed', 'failed']);
+    assert.equal(statuses.includes('uncertain'), false);
+    runner.close();
+  } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('plaintext agent credential requires explicit development-only opt in', () => {
   const env = { BISTRO_API_URL: 'https://api.example', BISTRO_AGENT_CREDENTIAL: 'x'.repeat(48) } as NodeJS.ProcessEnv;
   assert.throws(() => loadConfig(env), /Plaintext agent credentials are disabled/);

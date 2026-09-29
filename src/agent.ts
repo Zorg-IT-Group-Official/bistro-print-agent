@@ -27,8 +27,16 @@ export class PrintAgentRunner {
       await this.api.result(job.id, 'uncertain', 'payload_mismatch', 'A previously seen job ID arrived with a different payload or printer configuration');
       throw new Error('payload_mismatch');
     }
-    if (local.status === 'sent' || local.status === 'uncertain' || local.status === 'failed') {
-      if (local.status !== 'sent') await this.api.result(job.id, 'uncertain', 'local_ledger_guard', 'Local ledger blocks automatic resend');
+    if (local.status === 'sent') return;
+    if (local.status === 'uncertain') {
+      await this.api.result(job.id, 'uncertain', 'local_ledger_guard', 'Local ledger records that bytes may have been sent').catch(() => undefined);
+      return;
+    }
+    if (local.status === 'failed') {
+      // This status is written only when rendering fails before the sending
+      // transition. Preserve that known-safe failure if its earlier backend
+      // acknowledgement was lost; do not upgrade it to uncertain.
+      await this.api.result(job.id, 'failed', 'render_failed', (local.last_error ?? 'Rendering failed before sending').slice(0, 500)).catch((error: Error) => log('result_ack_failed', { jobId: job.id, status: 'failed', error: error.message }));
       return;
     }
     let bytes: Buffer;

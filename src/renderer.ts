@@ -31,12 +31,51 @@ function wrap(value: string, width: number): string[] {
 
 function separator(width: number): string { return '-'.repeat(width); }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validatePayload(value: unknown): asserts value is PrintPayload {
+  if (!isRecord(value)) throw new Error('malformed_payload: Print payload must be an object');
+  const supportedKinds = ['new_kot', 'order_update', 'reprint', 'test_print'];
+  if (typeof value.kind !== 'string' || !supportedKinds.includes(value.kind)) {
+    throw new Error(`unsupported_job_kind: ${String(value.kind ?? 'missing')}`);
+  }
+  if (value.schemaVersion !== 1) throw new Error('malformed_payload: Unsupported schema version');
+  if (value.kind === 'reprint' && value.sourceKind !== undefined && value.sourceKind !== 'new_kot' && value.sourceKind !== 'order_update') {
+    throw new Error('malformed_payload: Unsupported reprint source kind');
+  }
+  if (!isRecord(value.printing) || typeof value.printing.createdAt !== 'string') {
+    throw new Error('malformed_payload: Missing print metadata');
+  }
+  if (value.kind === 'test_print') return;
+  if (!Array.isArray(value.items) || !isRecord(value.branch)) {
+    throw new Error('malformed_payload: Missing branch or item list');
+  }
+  const validItem = (item: unknown) => isRecord(item) &&
+    typeof item.itemName === 'string' && typeof item.quantity === 'number' && Number.isFinite(item.quantity) &&
+    Array.isArray(item.modifiers) && item.modifiers.every((modifier) => typeof modifier === 'string');
+  if (!value.items.every(validItem)) throw new Error('malformed_payload: Invalid item row');
+  if (value.kind === 'order_update' || (value.kind === 'reprint' && value.sourceKind === 'order_update')) {
+    if (!Array.isArray(value.changes) || !value.changes.every((change) => isRecord(change) &&
+      typeof change.itemName === 'string' &&
+      ['added', 'increased', 'reduced', 'cancelled'].includes(String(change.changeType)) &&
+      Array.isArray(change.modifiers) && change.modifiers.every((modifier) => typeof modifier === 'string'))) {
+      throw new Error('malformed_payload: Invalid update changes');
+    }
+    if (value.currentItems !== undefined && (!Array.isArray(value.currentItems) || !value.currentItems.every(validItem))) {
+      throw new Error('malformed_payload: Invalid current station items');
+    }
+  }
+}
+
 export function renderKot(job: Pick<ClaimedJob, 'payload' | 'printer'>): Buffer {
   if (job.printer.renderMode !== 'text') throw new Error('unsupported_render_mode: This agent build supports text mode only');
   if (job.printer.paperWidthMm !== 58) throw new Error('unsupported_paper_width: This agent build is validated for 58mm only');
   if (job.printer.beeperEnabled) throw new Error('unsupported_beeper: Beeper output has not been validated for this printer model');
   if (job.printer.codePage !== 0) throw new Error('unsupported_code_page: This build supports printable ASCII only');
   const width = MAX_CHARS;
+  validatePayload(job.payload);
   const p: PrintPayload = job.payload;
   const chunks: number[] = [ESC, 0x40, ESC, 0x45, 1]; // initialize; bold on
   const line = (text: string) => {

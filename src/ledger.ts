@@ -22,7 +22,7 @@ export class PrintLedger {
     // proceed, so job state survives power loss/restart on the local disk.
     this.db.exec('PRAGMA wal_checkpoint(FULL)');
   }
-  get(jobId: string) { return this.db.prepare('SELECT * FROM jobs WHERE job_id=?').get(jobId) as { job_id: string; payload_hash: string; printer_id: string; status: LedgerStatus } | undefined; }
+  get(jobId: string) { return this.db.prepare('SELECT * FROM jobs WHERE job_id=?').get(jobId) as { job_id: string; payload_hash: string; printer_id: string; status: LedgerStatus; last_error: string | null } | undefined; }
   recordClaim(jobId: string, payload: unknown, printer: { id: string }): 'new' | 'duplicate' | 'payload_mismatch' {
     const payloadHash = createHash('sha256').update(JSON.stringify({ payload, printer })).digest('hex');
     const existing = this.get(jobId);
