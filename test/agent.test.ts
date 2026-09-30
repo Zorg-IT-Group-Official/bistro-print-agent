@@ -64,6 +64,32 @@ test('reprinted update payload still renders as an update with a reprint label',
   assert.match(text, /ORDER UPDATE[\s\S]*NOT A NEW ORDER[\s\S]*REPRINT[\s\S]*ADDED[\s\S]*1x Water/);
 });
 
+const visibleLines = (bytes: Buffer) => bytes.toString('latin1').split('\n')
+  // Drop ESC/POS command bytes (ESC/GS plus their argument bytes) before measuring printed text.
+  // eslint-disable-next-line no-control-regex
+  .map((line) => line.replace(/\x1b[@]|\x1b[Ea!d]\S?|\x1d[!V]\S?/g, '').replace(/[\x00-\x1f]/g, ''));
+
+test('80mm printers use the full 48-column width; 58mm stays at 32 columns', () => {
+  const longName = structuredClone(payload);
+  longName.items[0].itemName = 'Grilled Chicken Caesar Salad with Extra Parmesan and Croutons';
+  const wide = visibleLines(renderKot({ payload: longName, printer: { ...printer, paperWidthMm: 80 } }));
+  assert.ok(wide.includes('-'.repeat(48)), '80mm separator spans 48 columns');
+  assert.ok(wide.every((line) => line.length <= 48), `80mm line too long: ${wide.find((line) => line.length > 48)}`);
+  assert.ok(wide.some((line) => /^Item Name\s+QTY$/.test(line) && line.length === 48));
+  const narrow = visibleLines(renderKot({ payload: longName, printer }));
+  assert.ok(narrow.includes('-'.repeat(32)));
+  assert.ok(narrow.every((line) => line.length <= 32), `58mm line too long: ${narrow.find((line) => line.length > 32)}`);
+  // QTY stays right-aligned (wrap() must not collapse the padding).
+  assert.ok(narrow.includes('Item Name'.padEnd(27) + '  QTY'));
+  assert.ok(narrow.some((line) => line.length === 32 && line.endsWith('    2')));
+  assert.equal(rendererInternals.columnsFor(80), 48);
+  assert.equal(rendererInternals.columnsFor(58), 32);
+});
+
+test('renderer refuses paper widths it has no validated column count for', () => {
+  assert.throws(() => renderKot({ payload, printer: { ...printer, paperWidthMm: 72 } }), /unsupported_paper_width/);
+});
+
 test('renderer rejects non-ASCII instead of silently corrupting names', () => {
   const localized = structuredClone(payload); localized.items[0].itemName = 'ভাত';
   assert.throws(() => renderKot({ payload: localized, printer }), /unsupported_character/);

@@ -2,7 +2,18 @@ import { ClaimedJob, PrintPayload } from './types.js';
 
 const ESC = 0x1b;
 const GS = 0x1d;
-const MAX_CHARS = 32; // Font A at 58mm; deliberately conservative for common heads.
+/**
+ * Characters per line in ESC/POS Font A (12-dot) for each validated paper width:
+ * 58mm heads print 384 dots (32 columns), 80mm heads print 576 dots (48 columns).
+ */
+const COLUMNS_BY_PAPER_MM: Readonly<Record<number, number>> = { 58: 32, 80: 48 };
+const MAX_CHARS = COLUMNS_BY_PAPER_MM[58];
+
+function columnsFor(paperWidthMm: number): number {
+  const columns = COLUMNS_BY_PAPER_MM[paperWidthMm];
+  if (!columns) throw new Error(`unsupported_paper_width: This agent build supports 58mm and 80mm paper, not ${paperWidthMm}mm`);
+  return columns;
+}
 
 function assertAscii(value: string): void {
   if ([...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) > 126)) {
@@ -81,16 +92,22 @@ function validatePayload(value: unknown): asserts value is PrintPayload {
 
 export function renderKot(job: Pick<ClaimedJob, 'payload' | 'printer'>): Buffer {
   if (job.printer.renderMode !== 'text') throw new Error('unsupported_render_mode: This agent build supports text mode only');
-  if (job.printer.paperWidthMm !== 58) throw new Error('unsupported_paper_width: This agent build is validated for 58mm only');
   if (job.printer.beeperEnabled) throw new Error('unsupported_beeper: Beeper output has not been validated for this printer model');
   if (job.printer.codePage !== 0) throw new Error('unsupported_code_page: This build supports printable ASCII only');
-  const width = MAX_CHARS;
+  const width = columnsFor(job.printer.paperWidthMm);
   validatePayload(job.payload);
   const p: PrintPayload = job.payload;
   const chunks: number[] = [ESC, 0x40, ESC, 0x45, 1]; // initialize; bold on
   const line = (text: string) => {
     assertAscii(text);
     for (const part of wrap(text, width)) chunks.push(...Buffer.from(part, 'ascii'), 0x0a);
+  };
+  // For rows already laid out to exactly the column width (right-aligned QTY):
+  // wrap() collapses runs of spaces, which would glue the quantity to the name.
+  const fixed = (text: string) => {
+    assertAscii(text);
+    if (text.length > width) throw new Error('layout_overflow: Fixed row exceeds the printable width');
+    chunks.push(...Buffer.from(text, 'ascii'), 0x0a);
   };
   const centered = (text: string) => { chunks.push(ESC, 0x61, 1); line(text); chunks.push(ESC, 0x61, 0); };
   if (p.kind === 'test_print') {
@@ -160,15 +177,15 @@ export function renderKot(job: Pick<ClaimedJob, 'payload' | 'printer'>): Buffer 
     line(`Cashier: ${p.order?.cashierName || 'N/A'}`);
     if (p.kind === 'reprint') line(`*** REPRINT ${p.printing.originalOrderNumber ?? ''} ***`);
     line(separator(width));
-    line('Item Name'.padEnd(width - 5) + 'QTY'.padStart(5));
+    fixed('Item Name'.padEnd(width - 5) + 'QTY'.padStart(5));
     line(separator(width));
     for (const item of p.items) {
       const label = item.variantName ? `${item.itemName} (${item.variantName})` : item.itemName;
       assertAscii(label);
       const firstWidth = width - 5;
       const wrapped = wrap(label, firstWidth);
-      chunks.push(GS, 0x21, 0x01); // double-height only; retain the 32-column width
-      line(wrapped[0].padEnd(firstWidth) + String(item.quantity).slice(-5).padStart(5));
+      chunks.push(GS, 0x21, 0x01); // double-height only; keeps the full column width
+      fixed(wrapped[0].padEnd(firstWidth) + String(item.quantity).slice(-5).padStart(5));
       chunks.push(GS, 0x21, 0x00);
       for (const more of wrapped.slice(1)) line(more);
       for (const modifier of item.modifiers) for (const modifierLine of wrap(`  - ${modifier}`, width)) line(modifierLine);
@@ -190,4 +207,4 @@ export function renderKot(job: Pick<ClaimedJob, 'payload' | 'printer'>): Buffer 
   return Buffer.from(chunks);
 }
 
-export const rendererInternals = { wrap, MAX_CHARS };
+export const rendererInternals = { wrap, MAX_CHARS, columnsFor };
