@@ -8,11 +8,11 @@ This Windows-side process claims durable jobs from Bistro OS over outbound HTTPS
 
 - Durable SQLite job ledger (`BISTRO_AGENT_DB`) prevents a completed or uncertain job from being printed again after restart and detects a changed payload/printer for a reused job ID.
 - Job claim, sending transition, result, heartbeat and branch-scoped agent identity use the authenticated `/printing/agent/*` API.
-- ESC/POS text rendering for 58mm, 32 columns, bold, 58mm cut command when enabled; no beeper command is emitted. `sent` means the TCP stack accepted the bytes, not that a printer sensor confirmed paper output.
+- ESC/POS text rendering for 58mm (32 columns) or 80mm (48 columns) paper, set by the printer profile's `paperWidthMm`; other widths are rejected. Bold, cut command when enabled; no beeper command is emitted. `sent` means the TCP stack accepted the bytes, not that a printer sensor confirmed paper output.
 - Text mode is intentionally printable ASCII only. Non-ASCII names fail visibly rather than becoming mojibake. A validated raster/code-page renderer is required for Bengali or other scripts; do not enable raster in a profile with this build.
 - Automatic resend is allowed only before TCP writing begins. Failures after writing begins are `uncertain`; an operator can inspect the printer and request an explicit reprint.
 - `order_update` jobs render an immutable revision delta with `ORDER UPDATE / NOT A NEW ORDER`, station-only changes, and the station's current item reference. Admin suppresses browser auto-print only when an event confirms durable print jobs; legacy events without confirmed jobs retain the browser fallback. Confirmed durable updates print through this agent, with explicit reprint backed by the saved revision job.
-- Text mode still rejects Bengali and other non-ASCII item names. Verify production-language output on the actual 58mm printer before deployment; Phase 2 does not add raster or Bengali rendering.
+- Text mode still rejects Bengali and other non-ASCII item names. Verify production-language output on the actual printer before deployment; Phase 2 does not add raster or Bengali rendering.
 - The process only accepts private/local IPv4 endpoints received in its authenticated claimed job. It never listens for arbitrary browser/LAN commands.
 
 ## USB printer (Windows)
@@ -22,6 +22,14 @@ The Bar USB printer must be installed in Windows on the same PC that runs the pr
 Windows queue startup and PowerShell type compilation can take longer than a TCP connection. The agent uses `BISTRO_AGENT_WINDOWS_TIMEOUT_MS` for Windows printing (default 30000 ms); keep it below the server's 45000 ms job lease. Values from 1 through 44999 ms are accepted. TCP printing continues to use `BISTRO_AGENT_CONNECT_TIMEOUT_MS` (default 5000 ms).
 
 If a test print fails with a datatype error, add a second Windows printer named `Bar Token RAW`, using **Generic / Text Only** on the same USB port (for example `USB001`), then configure that exact queue name as the printer host. Run the agent as a Windows account that can access the installed printer. A successful agent result means the spooler accepted the complete RAW job, not that paper output was physically confirmed.
+
+### Speed: persistent spooler helper (0.3.0)
+
+On Windows the agent starts one hidden PowerShell helper at start-up (log: `windows_helper_ready`) and keeps it running, so each USB token skips PowerShell start-up and the C# compile (about 3-4 s before, well under 1 s after). Jobs go to it one at a time. If a job times out, or the helper crashes, it is replaced for the next job. Stage evidence is kept, so a failure after writing started is still `uncertain` and never reprinted automatically. If the helper cannot start at all (log: `windows_helper_unavailable_using_one_shot`), the agent falls back to the 0.2.0 one-process-per-job sender.
+
+### Paper width
+
+Set `paperWidthMm` to `80` for 80mm printers (48 columns) or `58` for 58mm printers (32 columns). **Upgrade every agent to 0.3.0 before switching a printer to 80mm**: 0.2.0 rejects 80mm jobs as `unsupported_paper_width`.
 
 ## Configure and run for development
 

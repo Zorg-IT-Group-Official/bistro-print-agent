@@ -4,10 +4,10 @@ import { PrintApi } from './api.js';
 import { PrintLedger } from './ledger.js';
 import { renderKot } from './renderer.js';
 import { sendRaw } from './tcp-printer.js';
-import { sendRawToWindowsPrinter } from './windows-printer.js';
+import { sendRawToWindowsPrinter, stopWindowsPrinter, warmUpWindowsPrinter } from './windows-printer.js';
 import { ClaimedJob } from './types.js';
 
-const version = '0.2.0';
+const version = '0.3.0';
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (event: string, fields: Record<string, unknown> = {}) => process.stdout.write(JSON.stringify({ at: new Date().toISOString(), level: 'info', event, ...fields }) + '\n');
 
@@ -103,6 +103,10 @@ export class PrintAgentRunner {
   async run(): Promise<void> {
     await this.recoverSending();
     log('agent_started', { version, hostname: os.hostname(), platform: os.platform() });
+    // Start the USB/Windows spooler helper now, so the first Bar token does not wait for it.
+    void warmUpWindowsPrinter(this.config.windowsPrintTimeoutMs).then((ready) => {
+      if (os.platform() === 'win32') log(ready ? 'windows_helper_ready' : 'windows_helper_unavailable_using_one_shot');
+    });
     while (!this.stopping) {
       try {
         if (Date.now() - this.lastHeartbeat >= this.config.heartbeatMs) {
@@ -120,5 +124,5 @@ export class PrintAgentRunner {
     this.close();
   }
   stop(): void { this.stopping = true; }
-  close(): void { this.ledger.close(); }
+  close(): void { stopWindowsPrinter(); this.ledger.close(); }
 }
