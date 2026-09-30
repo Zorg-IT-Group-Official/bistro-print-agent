@@ -1,5 +1,5 @@
 export interface PrinterConfig {
-  id: string; name: string; host: string; port: number; paperWidthMm: number;
+  id: string; name: string; transport?: 'escpos_tcp' | 'windows_printer'; host: string; port: number; paperWidthMm: number;
   printableWidthDots: number | null; renderMode: string; codePage: number;
   cutEnabled: boolean; beeperEnabled: boolean; configVersion: number;
 }

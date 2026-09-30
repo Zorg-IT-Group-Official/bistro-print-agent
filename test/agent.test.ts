@@ -8,6 +8,7 @@ import { PrintLedger } from '../src/ledger.js';
 import { renderKot, rendererInternals } from '../src/renderer.js';
 import { sendRaw } from '../src/tcp-printer.js';
 import { PrintAgentRunner } from '../src/agent.js';
+import { PrintApi } from '../src/api.js';
 import { AgentConfig, loadConfig } from '../src/config.js';
 import { ClaimedJob } from '../src/types.js';
 
@@ -114,7 +115,7 @@ test('agent persists sent before backend acknowledgement and never resends the s
   let sends = 0;
   try {
     globalThis.fetch = async () => new Response(JSON.stringify({ success: true, data: { accepted: true, id: 'job-1', status: 'sent' } }), { status: 200, headers: { 'content-type': 'application/json' } });
-    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
     const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
     const job: ClaimedJob = { id: 'job-1', status: 'claimed', payload, printer };
     await runner.process(job);
@@ -127,6 +128,43 @@ test('agent persists sent before backend acknowledgement and never resends the s
   }
 });
 
+test('agent routes Windows jobs by transport while missing transport keeps using TCP', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bistro-transport-routing-'));
+  const originalFetch = globalThis.fetch;
+  const tcpJobs: string[] = [];
+  const windowsJobs: string[] = [];
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
+    const timeouts: number[] = [];
+    const runner = new PrintAgentRunner(config, config.databasePath,
+      async (target, _bytes, timeoutMs) => { tcpJobs.push(target.id); timeouts.push(timeoutMs); },
+      async (target, _bytes, timeoutMs) => { windowsJobs.push(target.id); timeouts.push(timeoutMs); });
+    await runner.process({ id: 'legacy-tcp', status: 'claimed', payload, printer });
+    await runner.process({ id: 'usb-bar', status: 'claimed', payload, printer: { ...printer, transport: 'windows_printer' } });
+    await runner.process({ id: 'unknown', status: 'claimed', payload, printer: { ...printer, transport: 'future_transport' } as any });
+    assert.deepEqual(tcpJobs, ['printer-1']);
+    assert.deepEqual(windowsJobs, ['printer-1']);
+    assert.deepEqual(timeouts, [100, 30_000]);
+    runner.close();
+  } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('claim advertises Windows queues only on Windows', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: unknown[] = [];
+  try {
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')));
+      return new Response(JSON.stringify({ success: true, data: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: ':memory:', pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
+    await new PrintApi(config, 'win32').claim();
+    await new PrintApi(config, 'linux').claim();
+    assert.deepEqual(bodies, [{ transports: ['escpos_tcp', 'windows_printer'] }, { transports: ['escpos_tcp'] }]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('unknown job kind is safely failed without sending any TCP bytes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bistro-unknown-kind-'));
   const originalFetch = globalThis.fetch;
@@ -137,7 +175,7 @@ test('unknown job kind is safely failed without sending any TCP bytes', async ()
       paths.push(`${new URL(String(input)).pathname}:${String(JSON.parse(String(init?.body ?? '{}')).status ?? '')}`);
       return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
-    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
     const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
     await runner.process({ id: 'unknown-kind', status: 'claimed', payload: { ...payload, kind: 'future_kind' } as any, printer });
     assert.equal(sends, 0);
@@ -158,7 +196,7 @@ test('malformed known-kind payload is safely failed without sending any TCP byte
       paths.push(`${new URL(String(input)).pathname}:${String(JSON.parse(String(init?.body ?? '{}')).status ?? '')}`);
       return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
-    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
     const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
     await runner.process({ id: 'malformed-payload', status: 'claimed', payload: { ...payload, items: null } as any, printer });
     assert.equal(sends, 0);
@@ -179,7 +217,7 @@ test('malformed order-update quantities are failed before sending any TCP bytes'
       if (path.endsWith('/result')) statuses.push(String(JSON.parse(String(init?.body ?? '{}')).status));
       return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
-    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
     const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
     const validUpdate = structuredClone(payload);
     validUpdate.kind = 'order_update';
@@ -218,7 +256,7 @@ test('pre-send render failure remains failed when the backend acknowledgement is
       }
       return new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
-    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100, windowsPrintTimeoutMs: 30_000 };
     const runner = new PrintAgentRunner(config, config.databasePath, async () => { sends++; });
     const localized = structuredClone(payload); localized.items[0].itemName = 'ভাত';
     const job: ClaimedJob = { id: 'render-failure', status: 'claimed', payload: localized, printer };
@@ -234,5 +272,9 @@ test('pre-send render failure remains failed when the backend acknowledgement is
 test('plaintext agent credential requires explicit development-only opt in', () => {
   const env = { BISTRO_API_URL: 'https://api.example', BISTRO_AGENT_CREDENTIAL: 'x'.repeat(48) } as NodeJS.ProcessEnv;
   assert.throws(() => loadConfig(env), /Plaintext agent credentials are disabled/);
-  assert.equal(loadConfig({ ...env, BISTRO_AGENT_ALLOW_PLAINTEXT_CREDENTIAL: 'true' }).credential, env.BISTRO_AGENT_CREDENTIAL);
+  const config = loadConfig({ ...env, BISTRO_AGENT_ALLOW_PLAINTEXT_CREDENTIAL: 'true' });
+  assert.equal(config.credential, env.BISTRO_AGENT_CREDENTIAL);
+  assert.equal(config.windowsPrintTimeoutMs, 30_000);
+  assert.equal(loadConfig({ ...env, BISTRO_AGENT_ALLOW_PLAINTEXT_CREDENTIAL: 'true', BISTRO_AGENT_WINDOWS_TIMEOUT_MS: '12000' }).windowsPrintTimeoutMs, 12_000);
+  assert.throws(() => loadConfig({ ...env, BISTRO_AGENT_ALLOW_PLAINTEXT_CREDENTIAL: 'true', BISTRO_AGENT_WINDOWS_TIMEOUT_MS: '45000' }), /below the 45 second server lease/);
 });

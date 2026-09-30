@@ -9,6 +9,7 @@ export interface AgentConfig {
   pollMs: number;
   heartbeatMs: number;
   connectTimeoutMs: number;
+  windowsPrintTimeoutMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
@@ -20,12 +21,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     throw new Error('The print agent requires HTTPS except for loopback development');
   }
   if (credential.length < 32) throw new Error('Agent credential is invalid');
+  const windowsPrintTimeoutMs = Number(env.BISTRO_AGENT_WINDOWS_TIMEOUT_MS ?? 30_000);
+  if (!Number.isInteger(windowsPrintTimeoutMs) || windowsPrintTimeoutMs < 1 || windowsPrintTimeoutMs >= 45_000) {
+    throw new Error('BISTRO_AGENT_WINDOWS_TIMEOUT_MS must be an integer from 1 to 44999 (below the 45 second server lease)');
+  }
   return {
     apiBaseUrl: url.toString().replace(/\/$/, ''), credential,
     databasePath: env.BISTRO_AGENT_DB ?? './data/print-agent.sqlite',
     pollMs: Number(env.BISTRO_AGENT_POLL_MS ?? 2000),
     heartbeatMs: Number(env.BISTRO_AGENT_HEARTBEAT_MS ?? 30_000),
     connectTimeoutMs: Number(env.BISTRO_AGENT_CONNECT_TIMEOUT_MS ?? 5000),
+    windowsPrintTimeoutMs,
   };
 }
 function loadCredential(env: NodeJS.ProcessEnv): string | undefined {
