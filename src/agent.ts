@@ -72,7 +72,7 @@ export class PrintAgentRunner {
 
     this.ledger.setStatus(job.id, 'sending');
     try {
-      if (transport === 'windows_printer') await this.sendWindows(job.printer, bytes, this.config.connectTimeoutMs);
+      if (transport === 'windows_printer') await this.sendWindows(job.printer, bytes, this.config.windowsPrintTimeoutMs);
       else await this.send(job.printer, bytes, this.config.connectTimeoutMs);
     } catch (error) {
       const e = error as Error & { delivery?: 'retryable_failed' | 'uncertain' };

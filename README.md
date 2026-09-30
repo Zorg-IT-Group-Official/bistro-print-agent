@@ -19,6 +19,8 @@ This Windows-side process claims durable jobs from Bistro OS over outbound HTTPS
 
 The Bar USB printer must be installed in Windows on the same PC that runs the print agent. Configure the printer profile with `transport: "windows_printer"` and the exact queue name shown in Windows (for example `Bar Desk`) as `host`; the profile port is stored as `0`. The driver must accept RAW data. Generic / Text Only and the printer maker's POS-58 driver usually do; some newer v4/XPS drivers do not.
 
+Windows queue startup and PowerShell type compilation can take longer than a TCP connection. The agent uses `BISTRO_AGENT_WINDOWS_TIMEOUT_MS` for Windows printing (default 30000 ms); keep it below the server's 45000 ms job lease. Values from 1 through 44999 ms are accepted. TCP printing continues to use `BISTRO_AGENT_CONNECT_TIMEOUT_MS` (default 5000 ms).
+
 If a test print fails with a datatype error, add a second Windows printer named `Bar Token RAW`, using **Generic / Text Only** on the same USB port (for example `USB001`), then configure that exact queue name as the printer host. Run the agent as a Windows account that can access the installed printer. A successful agent result means the spooler accepted the complete RAW job, not that paper output was physically confirmed.
 
 ## Configure and run for development
