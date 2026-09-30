@@ -2,7 +2,7 @@
 
 > **Repository snapshot:** The first repository commit imports the current verified working tree and already includes the Phase 2 `order_update` renderer. It is not a pre-Phase-2 baseline.
 
-This Windows-side process claims durable jobs from Bistro OS over outbound HTTPS and sends ESC/POS bytes to the printer's private TCP endpoint. It does not expose an HTTP listener, use browser printing, or connect the cloud API to the restaurant LAN. It does not mark orders ready/cooked.
+This Windows-side process claims durable jobs from Bistro OS over outbound HTTPS and sends ESC/POS bytes to a private TCP printer or a locally installed Windows printer queue. It does not expose an HTTP listener, use browser printing, or connect the cloud API to the restaurant LAN. It does not mark orders ready/cooked.
 
 ## Current capabilities and limits
 
@@ -14,6 +14,12 @@ This Windows-side process claims durable jobs from Bistro OS over outbound HTTPS
 - `order_update` jobs render an immutable revision delta with `ORDER UPDATE / NOT A NEW ORDER`, station-only changes, and the station's current item reference. Admin suppresses browser auto-print only when an event confirms durable print jobs; legacy events without confirmed jobs retain the browser fallback. Confirmed durable updates print through this agent, with explicit reprint backed by the saved revision job.
 - Text mode still rejects Bengali and other non-ASCII item names. Verify production-language output on the actual 58mm printer before deployment; Phase 2 does not add raster or Bengali rendering.
 - The process only accepts private/local IPv4 endpoints received in its authenticated claimed job. It never listens for arbitrary browser/LAN commands.
+
+## USB printer (Windows)
+
+The Bar USB printer must be installed in Windows on the same PC that runs the print agent. Configure the printer profile with `transport: "windows_printer"` and the exact queue name shown in Windows (for example `Bar Desk`) as `host`; the profile port is stored as `0`. The driver must accept RAW data. Generic / Text Only and the printer maker's POS-58 driver usually do; some newer v4/XPS drivers do not.
+
+If a test print fails with a datatype error, add a second Windows printer named `Bar Token RAW`, using **Generic / Text Only** on the same USB port (for example `USB001`), then configure that exact queue name as the printer host. Run the agent as a Windows account that can access the installed printer. A successful agent result means the spooler accepted the complete RAW job, not that paper output was physically confirmed.
 
 ## Configure and run for development
 
@@ -48,10 +54,9 @@ The agent decrypts that file through Windows PowerShell at startup. Restrict the
 
 ## Restaurant installation checks
 
-1. Ensure the Windows PC can reach the configured printer on the restaurant LAN and that outbound HTTPS to the Bistro API works.
-2. From PowerShell on that PC, verify `Test-NetConnection <printer-private-ip> -Port 9100` succeeds. Use the actual restaurant LAN settings; do not change router/printer addressing as part of agent deployment.
-3. Create a printer profile through the branch-scoped API using the printer's private IP as `host`, `port=9100`, and `paperWidthMm=58`. Assign that profile to the intended active kitchen station.
-4. Enroll the agent for that branch, start it, then enqueue one explicit Test Print. Confirm text and cutter physically on the target printer before enabling automatic KOT assignments.
-5. Place one controlled test order. Confirm exactly one station job appears and the matching station printer prints it. Test reprint only through the explicit reprint action.
+1. For a TCP printer, verify `Test-NetConnection <printer-private-ip> -Port 9100` from the agent PC. For a USB printer, confirm the queue is installed and visible in Windows.
+2. Create a printer profile through the branch-scoped API with the correct transport and host, then assign it to the intended active kitchen station.
+3. Enroll the agent for that branch, start it, then enqueue one explicit Test Print. Confirm text and cutter physically on the target printer before enabling automatic KOT assignments.
+4. Place one controlled test order. Confirm exactly one station job appears and the matching station printer prints it. Test reprint only through the explicit reprint action.
 
 There is no claim of physical printer validation until those checks are completed on the restaurant PC and printer.

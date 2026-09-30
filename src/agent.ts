@@ -4,9 +4,10 @@ import { PrintApi } from './api.js';
 import { PrintLedger } from './ledger.js';
 import { renderKot } from './renderer.js';
 import { sendRaw } from './tcp-printer.js';
+import { sendRawToWindowsPrinter } from './windows-printer.js';
 import { ClaimedJob } from './types.js';
 
-const version = '0.1.0';
+const version = '0.2.0';
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (event: string, fields: Record<string, unknown> = {}) => process.stdout.write(JSON.stringify({ at: new Date().toISOString(), level: 'info', event, ...fields }) + '\n');
 
@@ -16,7 +17,7 @@ export class PrintAgentRunner {
   private stopping = false;
   private lastHeartbeat = 0;
 
-  constructor(private readonly config: AgentConfig, ledgerPath = config.databasePath, private readonly send = sendRaw) {
+  constructor(private readonly config: AgentConfig, ledgerPath = config.databasePath, private readonly send = sendRaw, private readonly sendWindows = sendRawToWindowsPrinter) {
     this.api = new PrintApi(config); this.ledger = new PrintLedger(ledgerPath);
   }
 
@@ -50,6 +51,14 @@ export class PrintAgentRunner {
       return;
     }
 
+    const transport = job.printer.transport ?? 'escpos_tcp';
+    if (transport !== 'escpos_tcp' && transport !== 'windows_printer') {
+      this.ledger.setStatus(job.id, 'failed', 'unsupported_transport');
+      await this.api.result(job.id, 'failed', 'unsupported_transport', `Unsupported printer transport: ${String(transport)}`).catch(() => undefined);
+      log('print_failed', { jobId: job.id, status: 'failed', errorCode: 'unsupported_transport' });
+      return;
+    }
+
     try {
       await this.api.sending(job.id);
     } catch (error) {
@@ -63,7 +72,8 @@ export class PrintAgentRunner {
 
     this.ledger.setStatus(job.id, 'sending');
     try {
-      await this.send(job.printer, bytes, this.config.connectTimeoutMs);
+      if (transport === 'windows_printer') await this.sendWindows(job.printer, bytes, this.config.connectTimeoutMs);
+      else await this.send(job.printer, bytes, this.config.connectTimeoutMs);
     } catch (error) {
       const e = error as Error & { delivery?: 'retryable_failed' | 'uncertain' };
       const status = e.delivery === 'retryable_failed' ? 'retryable_failed' : 'uncertain';

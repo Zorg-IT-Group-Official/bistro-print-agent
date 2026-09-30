@@ -8,6 +8,7 @@ import { PrintLedger } from '../src/ledger.js';
 import { renderKot, rendererInternals } from '../src/renderer.js';
 import { sendRaw } from '../src/tcp-printer.js';
 import { PrintAgentRunner } from '../src/agent.js';
+import { PrintApi } from '../src/api.js';
 import { AgentConfig, loadConfig } from '../src/config.js';
 import { ClaimedJob } from '../src/types.js';
 
@@ -125,6 +126,40 @@ test('agent persists sent before backend acknowledgement and never resends the s
     globalThis.fetch = originalFetch;
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('agent routes Windows jobs by transport while missing transport keeps using TCP', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bistro-transport-routing-'));
+  const originalFetch = globalThis.fetch;
+  const tcpJobs: string[] = [];
+  const windowsJobs: string[] = [];
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ success: true, data: { accepted: true } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: join(directory, 'agent.sqlite'), pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    const runner = new PrintAgentRunner(config, config.databasePath,
+      async (target) => { tcpJobs.push(target.id); }, async (target) => { windowsJobs.push(target.id); });
+    await runner.process({ id: 'legacy-tcp', status: 'claimed', payload, printer });
+    await runner.process({ id: 'usb-bar', status: 'claimed', payload, printer: { ...printer, transport: 'windows_printer' } });
+    await runner.process({ id: 'unknown', status: 'claimed', payload, printer: { ...printer, transport: 'future_transport' } as any });
+    assert.deepEqual(tcpJobs, ['printer-1']);
+    assert.deepEqual(windowsJobs, ['printer-1']);
+    runner.close();
+  } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('claim advertises Windows queues only on Windows', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: unknown[] = [];
+  try {
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')));
+      return new Response(JSON.stringify({ success: true, data: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const config: AgentConfig = { apiBaseUrl: 'https://example.test', credential: 'x'.repeat(48), databasePath: ':memory:', pollMs: 10, heartbeatMs: 1000, connectTimeoutMs: 100 };
+    await new PrintApi(config, 'win32').claim();
+    await new PrintApi(config, 'linux').claim();
+    assert.deepEqual(bodies, [{ transports: ['escpos_tcp', 'windows_printer'] }, { transports: ['escpos_tcp'] }]);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('unknown job kind is safely failed without sending any TCP bytes', async () => {
